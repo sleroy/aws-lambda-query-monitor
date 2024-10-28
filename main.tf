@@ -60,20 +60,73 @@ resource "aws_iam_role_policy_attachment" "attach_iam_policy_to_iam_role" {
   policy_arn = aws_iam_policy.iam_policy_for_lambda.arn
 }
 
+# Prepare Lambda package (https://github.com/hashicorp/terraform/issues/8344#issuecomment-345807204)
+resource "null_resource" "pip" {
+  triggers = {
+    main         = "${base64sha256(file("python/index.py"))}"
+    requirements = "${base64sha256(file("python/requirements.txt"))}"
+  }
+
+  provisioner "local-exec" {
+    command = "${var.pip_path} install -r ${path.root}/python/requirements.txt -t python/lib"
+  }
+}
+
 data "archive_file" "zip_the_python_code" {
   type        = "zip"
   source_dir  = "${path.module}/python/"
-  output_path = "${path.module}/python/sqlmonitor-python.zip"
+  #source_file = "${path.module}/python/index.py"
+  output_path = "${path.module}/temp/sqlmonitor-python.zip"
+  depends_on = [null_resource.pip]
 }
 
-resource "aws_lambda_function" "terraform_lambda_func" {
-  filename      = "${path.module}/python/sqlmonitor-python.zip"
+
+
+resource "aws_lambda_function" "terraform_lambda_func" {  
+  filename      = data.archive_file.zip_the_python_code.output_path
   function_name = "SqlQueryMonitor_Lambda_Function"
   role          = aws_iam_role.lambda_role.arn
+  timeout       = 120
   handler       = "index.lambda_handler"
   runtime       = "python3.12"
-  depends_on    = [aws_iam_role_policy_attachment.attach_iam_policy_to_iam_role]
+  depends_on    = [aws_iam_role_policy_attachment.attach_iam_policy_to_iam_role, aws_cloudwatch_log_group.lambda_logging]
+  memory_size   = 256
+  source_code_hash = data.archive_file.zip_the_python_code.output_base64sha256
+    # if you want to specify the retention period of the logs you need this
 }
+
+
+# This defines the IAM policy needed for a lambda to log. #1
+data "aws_iam_policy_document" "lambda_logging" {
+  statement {
+    actions = [
+      "logs:CreateLogGroup",
+      "logs:CreateLogStream",
+      "logs:PutLogEvents",
+    ]
+
+    resources = [
+      "arn:aws:logs:*:*:*",
+    ]
+  }
+}
+
+resource "aws_iam_policy" "lambda_logging" {
+  name   = "sqlquery-monitor-lambda-logging"
+  path   = "/"
+  policy = "${data.aws_iam_policy_document.lambda_logging.json}"
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_logging" {
+  role       = aws_iam_role.lambda_role.name
+  policy_arn = "${aws_iam_policy.lambda_logging.arn}"
+}
+
+resource "aws_cloudwatch_log_group" "lambda_logging" {
+  name              = "/aws/lambda/sqlquery-monitor-lambda-function"
+  retention_in_days = 5
+}
+
 
 resource "aws_scheduler_schedule" "scheduler_rule" {
   name       = "sqlquery-monitor-schedule"

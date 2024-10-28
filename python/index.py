@@ -1,6 +1,21 @@
+
 import os
-import boto3
+import sys
+import json
+import logging
 import time
+import json
+from pprint import pformat
+
+# Hack to use dependencies from lib directory
+BASE_PATH = os.path.dirname(__file__)
+sys.path.append(BASE_PATH + "/lib")
+
+
+LOGGER = logging.getLogger(__name__)
+logging.getLogger().setLevel(logging.INFO)
+
+import boto3
 import pyodbc
 import boto3
 from botocore.exceptions import ClientError
@@ -28,12 +43,11 @@ def get_secret(secret_manager_id: str):
         raise e
 
     secret = get_secret_value_response['SecretString']
-    return secret
+    return json.loads(secret)
 
 
 def lambda_handler(event, context):
-    # Retrieve database connection details from environment variables
-
+    LOGGER.info("%s", pformat({"Context" : vars(context), "Request": event}))
     
     # Get query and query name from the event
     query_sql = event['sql']  # Replace with the actual query_
@@ -43,11 +57,11 @@ def lambda_handler(event, context):
 
     # Retrieve database credentials from AWS Secrets Manager
     secret_response = get_secret(secret_manager_id)
-    db_username = secret_response['SecretString'].split(',')[0].split(':')[1].strip('"')
-    db_password = secret_response['SecretString'].split(',')[1].split(':')[1].strip('"')
-    db_host = secret_response['SecretString'].split(',')[2].split(':')[1].strip('"')
-    db_name = secret_response['SecretString'].split(',')[3].split(':')[1].strip('"')
-    db_port = secret_response['SecretString'].split(',')[4].split(':')[1].strip('"')
+    db_username = secret_response['username']
+    db_password = secret_response['password']
+    db_host = secret_response['host']
+    db_name = secret_response['database']
+    db_port = secret_response['port']
     
     # Connect to the SQL Server database
     connection_string = f'DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={db_host},{db_port};DATABASE={db_name};UID={db_username};PWD={db_password}'
@@ -83,4 +97,8 @@ def lambda_handler(event, context):
         'statusCode': 200,
         'body': f'SQL query executed in {response_time:.2f} seconds'
     }
-    
+
+
+if __name__ == '__main__':
+    # Do nothing if executed as a script
+    pass        
