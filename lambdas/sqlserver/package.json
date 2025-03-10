@@ -1,0 +1,19 @@
+{
+  "name": "sqlquerymonitor-sqlserver",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.mjs",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node index.mjs"
+  },
+  "dependencies": {
+    "aws-sdk": "^2.1691.0",
+    "aws-xray-sdk": "^3.10.1",
+    "mssql": "^11.0.1",
+    "util": "^0.12.5"
+  },
+  "keywords": [],
+  "author": "Sylvain Leroy <sleroy@byoskill.com>",
+  "license": "ISC"
+}

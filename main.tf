@@ -9,6 +9,83 @@ provider "aws" {
   }
 }
 
+/* VPC Resources*/
+data "aws_vpc" "vpc" {
+  filter {
+    name   = "tag:Name"
+    values = [var.vpc_name]
+  }
+}
+
+data "aws_subnets" "private_db_subnet" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.vpc.id]
+  }
+
+  filter {
+    name   = "tag:Name"
+    values = var.subnets
+  }
+}
+
+resource "aws_security_group" "lambda_security_group" {
+  name        = "lambda_security_group"
+  description = "Allow Sqlserver inbound traffic and all outbound traffic"
+  vpc_id      = data.aws_vpc.vpc.id
+
+  tags = {
+    Name = "lambda_security_group"
+  }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "allow_sqlserver_ipv4" {
+  security_group_id = aws_security_group.lambda_security_group.id
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = 1443
+  ip_protocol       = "tcp"
+  to_port           = 1443
+}
+
+resource "aws_vpc_security_group_ingress_rule" "allow_sqlserver2_ipv4" {
+  security_group_id = aws_security_group.lambda_security_group.id
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = 1433
+  ip_protocol       = "tcp"
+  to_port           = 1434
+}
+
+resource "aws_vpc_security_group_ingress_rule" "allow_sqlserver3_ipv4" {
+  security_group_id = aws_security_group.lambda_security_group.id
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = 4032
+  ip_protocol       = "tcp"
+  to_port           = 4032
+}
+
+resource "aws_vpc_security_group_ingress_rule" "allow_sqlserver4_ipv4" {
+  security_group_id = aws_security_group.lambda_security_group.id
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = 1434
+  ip_protocol       = "tcp"
+  to_port           = 1434
+}
+
+resource "aws_vpc_security_group_ingress_rule" "allow_sqlserver5_ipv4" {
+  security_group_id = aws_security_group.lambda_security_group.id
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = 1434
+  ip_protocol       = "udp"
+  to_port           = 1434
+}
+
+resource "aws_vpc_security_group_egress_rule" "allow_all_traffic_ipv4" {
+  security_group_id = aws_security_group.lambda_security_group.id
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "-1" # semantically equivalent to all ports
+}
+
+/* Security */
 
 resource "aws_iam_role" "lambda_role" {
   name = "SqlQueryMonitor_Lambda_Function_Role"
@@ -50,6 +127,37 @@ resource "aws_iam_policy" "iam_policy_for_lambda" {
           "secretsmanager:DescribeSecret"
         ],
         "Resource" : var.db_secret_id
+      },
+      {
+        "Effect" : "Allow",
+        "Action" : [
+          "cloudwatch:PutMetricData",
+        ],
+        "Resource" : "*"
+      },
+      {
+        "Sid" : "VisualEditor0",
+        "Effect" : "Allow",
+        "Action" : [
+          "ec2:CreateNetworkInterface",
+          "ec2:CreateTags",
+          "ec2:DescribeNetworkInterfaces",
+          "ec2:DeleteNetworkInterface",
+          "ec2:AssignPrivateIpAddresses",
+          "ec2:UnassignPrivateIpAddresses"
+        ],
+        "Resource" : "*"
+      },
+      {
+        "Effect" : "Allow",
+        "Action" : [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+        ],
+        "Resource" : [
+          "arn:aws:logs:*:*:*",
+        ]
       }
     ]
   })
@@ -60,67 +168,47 @@ resource "aws_iam_role_policy_attachment" "attach_iam_policy_to_iam_role" {
   policy_arn = aws_iam_policy.iam_policy_for_lambda.arn
 }
 
+/* Packaging */
+
 # Prepare Lambda package (https://github.com/hashicorp/terraform/issues/8344#issuecomment-345807204)
 resource "null_resource" "pip" {
   triggers = {
-    main         = "${base64sha256(file("python/index.py"))}"
-    requirements = "${base64sha256(file("python/requirements.txt"))}"
+    main         = "${base64sha256(file("lambdas/sqlserver/index.mjs"))}"
+    requirements = "${base64sha256(file("lambdas/sqlserver/package.json"))}"
   }
 
   provisioner "local-exec" {
-    command = "${var.pip_path} install -r ${path.root}/python/requirements.txt -t python/lib"
+    command = "bash ${path.module}/packaging.sh"
   }
 }
 
 data "archive_file" "zip_the_python_code" {
-  type        = "zip"
-  source_dir  = "${path.module}/python/"
+  type       = "zip"
+  source_dir = "${path.module}/lambda_dist_pkg/"
   #source_file = "${path.module}/python/index.py"
-  output_path = "${path.module}/temp/sqlmonitor-python.zip"
-  depends_on = [null_resource.pip]
+  output_path = "${path.module}/temp/sqlmonitor-sqlsqerver.zip"
+  depends_on  = [null_resource.pip]
 }
 
 
 
-resource "aws_lambda_function" "terraform_lambda_func" {  
-  filename      = data.archive_file.zip_the_python_code.output_path
-  function_name = "SqlQueryMonitor_Lambda_Function"
-  role          = aws_iam_role.lambda_role.arn
-  timeout       = 120
-  handler       = "index.lambda_handler"
-  runtime       = "python3.12"
-  depends_on    = [aws_iam_role_policy_attachment.attach_iam_policy_to_iam_role, aws_cloudwatch_log_group.lambda_logging]
-  memory_size   = 256
+resource "aws_lambda_function" "terraform_lambda_func" {
+  filename         = data.archive_file.zip_the_python_code.output_path
+  function_name    = "SqlQueryMonitor_Lambda_Function"
+  role             = aws_iam_role.lambda_role.arn
+  timeout          = 120
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  depends_on       = [aws_iam_role_policy_attachment.attach_iam_policy_to_iam_role, aws_cloudwatch_log_group.lambda_logging]
+  memory_size      = 256
   source_code_hash = data.archive_file.zip_the_python_code.output_base64sha256
-    # if you want to specify the retention period of the logs you need this
-}
-
-
-# This defines the IAM policy needed for a lambda to log. #1
-data "aws_iam_policy_document" "lambda_logging" {
-  statement {
-    actions = [
-      "logs:CreateLogGroup",
-      "logs:CreateLogStream",
-      "logs:PutLogEvents",
-    ]
-
-    resources = [
-      "arn:aws:logs:*:*:*",
-    ]
+  vpc_config {
+    subnet_ids         = data.aws_subnets.private_db_subnet.ids
+    security_group_ids = [aws_security_group.lambda_security_group.id]
   }
 }
 
-resource "aws_iam_policy" "lambda_logging" {
-  name   = "sqlquery-monitor-lambda-logging"
-  path   = "/"
-  policy = "${data.aws_iam_policy_document.lambda_logging.json}"
-}
-
-resource "aws_iam_role_policy_attachment" "lambda_logging" {
-  role       = aws_iam_role.lambda_role.name
-  policy_arn = "${aws_iam_policy.lambda_logging.arn}"
-}
+/** Loggin */
 
 resource "aws_cloudwatch_log_group" "lambda_logging" {
   name              = "/aws/lambda/sqlquery-monitor-lambda-function"
