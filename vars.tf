@@ -21,10 +21,10 @@ variable "pip_path" {
 
 variable "vpc_name" {
   type= string
-  default = "OnpremiseVPC"
+  default = "dev-vpc"
 }
 
 variable "subnets" {
   type= list
-  default = ["OnPremStack/OnpremiseVPC/private-subnetSubnet2", "OnPremStack/OnpremiseVPC/private-subnetSubnet1"]
+  default = ["dev-private-subnet-1", "dev-private-subnet-2"]
 }

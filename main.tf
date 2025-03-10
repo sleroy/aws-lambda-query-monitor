@@ -173,8 +173,8 @@ resource "aws_iam_role_policy_attachment" "attach_iam_policy_to_iam_role" {
 # Prepare Lambda package (https://github.com/hashicorp/terraform/issues/8344#issuecomment-345807204)
 resource "null_resource" "pip" {
   triggers = {
-    main         = "${base64sha256(file("lambdas/sqlserver/index.mjs"))}"
-    requirements = "${base64sha256(file("lambdas/sqlserver/package.json"))}"
+    main         = "${base64sha256(file("lambdas/python/sqlserver/index.py"))}"
+    requirements = "${base64sha256(file("lambdas/python/sqlserver/requirements.txt"))}"
   }
 
   provisioner "local-exec" {
@@ -194,11 +194,11 @@ data "archive_file" "zip_the_python_code" {
 
 resource "aws_lambda_function" "terraform_lambda_func" {
   filename         = data.archive_file.zip_the_python_code.output_path
-  function_name    = "SqlQueryMonitor_Lambda_Function"
+  function_name    = "sql-monitor-python39-sqlserver"
   role             = aws_iam_role.lambda_role.arn
   timeout          = 120
   handler          = "index.handler"
-  runtime          = "nodejs20.x"
+  runtime          = "python3.9"
   depends_on       = [aws_iam_role_policy_attachment.attach_iam_policy_to_iam_role, aws_cloudwatch_log_group.lambda_logging]
   memory_size      = 256
   source_code_hash = data.archive_file.zip_the_python_code.output_base64sha256
